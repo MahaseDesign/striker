@@ -249,9 +249,8 @@ function nextQuestion(){
   usedQs.push(idx);
   currentQ=QS[idx];
 
-  // Pick one answer for this ball — cycle: sometimes correct, sometimes wrong
-  // Probability of correct = 0.5, so player gets roughly 50/50 right/wrong balls
-  const allAnswers=[currentQ.a,...currentQ.w.slice(0,2)];
+  // Weight correct answer to ~65% chance so player gets more scoring opportunities
+  const allAnswers=[currentQ.a, currentQ.a, currentQ.a, currentQ.w[0], currentQ.w[1]];
   currentAnswer=allAnswers[Math.floor(Math.random()*allAnswers.length)];
 
   ball.visible=false;
