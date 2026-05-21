@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS Striker</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@600;800;900&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#0a1a0a;overflow:hidden;width:100vw;height:100vh;font-family:'Nunito',sans-serif;user-select:none;}
+  canvas{display:block;position:absolute;top:0;left:0;}
+  #overlay{
+    position:fixed;inset:0;background:rgba(0,10,0,0.93);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    z-index:200;gap:16px;
+  }
+  #overlay h1{
+    font-family:'Bebas Neue',cursive;font-size:clamp(3rem,10vw,6rem);
+    color:#fff;letter-spacing:4px;line-height:1;text-align:center;
+    text-shadow:0 0 40px #00ff88,0 0 80px #00aa44;
+  }
+  #overlay .sub{color:#00ff88;font-size:1rem;font-weight:900;letter-spacing:3px;text-transform:uppercase;}
+  #overlay p{color:#aaffcc;font-size:1rem;text-align:center;max-width:400px;line-height:1.7;}
+  #start-btn{
+    background:linear-gradient(135deg,#00cc55,#007733);
+    color:#fff;border:none;padding:16px 52px;
+    font-family:'Bebas Neue',cursive;font-size:1.8rem;letter-spacing:3px;
+    border-radius:4px;cursor:pointer;
+    box-shadow:0 4px 24px rgba(0,200,80,0.6);
+    transition:transform 0.1s,box-shadow 0.1s;
+  }
+  #start-btn:hover{transform:scale(1.06);box-shadow:0 6px 32px rgba(0,200,80,0.9);}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <h1>CS<br>STRIKER</h1>
+  <div class="sub">⚽ Computer Science Quiz</div>
+  <p>A ball rolls down with an answer.<br>
+     Press <strong style="color:#fff">← →</strong> to move your striker.<br>
+     Press <strong style="color:#fff">SPACE</strong> or <strong style="color:#fff">tap centre</strong> to shoot.<br>
+     Kick the <strong style="color:#00ff88">correct answer</strong> into the goal!<br>
+     <span style="color:#ff9944">Wrong answer saved = lose a life. Every 3 goals = +1 life!</span></p>
+  <button id="start-btn">KICK OFF</button>
+</div>
+
+<script>
+// ══════════════════════════════════════════
+// AUDIO
+// ══════════════════════════════════════════
+const AC = new (window.AudioContext||window.webkitAudioContext)();
+
+function tone(freq,type,dur,vol=0.3,delay=0){
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type=type; o.frequency.value=freq;
+  const t=AC.currentTime+delay;
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.start(t); o.stop(t+dur+0.05);
+}
+
+function sfxKick(){
+  tone(180,'square',0.08,0.4);
+  tone(120,'sawtooth',0.12,0.3,0.04);
+  tone(80,'sine',0.2,0.2,0.1);
+}
+function sfxGoal(){
+  [523,659,784,1047,1319].forEach((f,i)=>tone(f,'square',0.2,0.35,i*0.1));
+  setTimeout(()=>[659,784,1047,1319,1568].forEach((f,i)=>tone(f,'square',0.18,0.3,i*0.08)),600);
+}
+function sfxSave(){
+  [330,277,220,185].forEach((f,i)=>tone(f,'sawtooth',0.15,0.4,i*0.09));
+}
+function sfxWhistle(){
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type='sine'; o.frequency.setValueAtTime(1800,AC.currentTime);
+  o.frequency.linearRampToValueAtTime(2200,AC.currentTime+0.15);
+  o.frequency.linearRampToValueAtTime(1800,AC.currentTime+0.3);
+  g.gain.setValueAtTime(0.4,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.4);
+  o.start(); o.stop(AC.currentTime+0.45);
+}
+function sfxBounce(){
+  tone(440,'sine',0.05,0.2);
+}
+function sfxMiss(){
+  // Ball rolls past — comic whoosh down
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.connect(g); g.connect(AC.destination);
+  o.type='sine';
+  o.frequency.setValueAtTime(600,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(120,AC.currentTime+0.4);
+  g.gain.setValueAtTime(0.25,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.45);
+  o.start(); o.stop(AC.currentTime+0.5);
+}
+function sfxLifeGained(){
+  // Happy ascending chime
+  [784,988,1175,1568].forEach((f,i)=>tone(f,'sine',0.18,0.3,i*0.1));
+}
+function sfxCrowd(){
+  // Crowd roar — layered noise bursts
+  for(let i=0;i<6;i++){
+    const freq=200+Math.random()*400;
+    tone(freq,'sawtooth',0.6+Math.random()*0.4,0.04+Math.random()*0.05,i*0.05);
+  }
+}
+function sfxBallDrop(){
+  // Subtle bounce as ball appears
+  tone(320,'sine',0.08,0.15);
+  tone(200,'sine',0.1,0.1,0.07);
+}
+
+// ══════════════════════════════════════════
+// QUESTIONS
+// ══════════════════════════════════════════
+const QS = [
+  {q:"What does CPU stand for?", a:"Central Processing Unit", w:["Control Panel Unit","Computer Program Unit","Core Power Unit"]},
+  {q:"Which language uses indentation for code blocks?", a:"Python", w:["Java","C++","HTML"]},
+  {q:"What does HTML stand for?", a:"HyperText Markup Language", w:["High Transfer Markup Loop","Home Text Markup Logic","Hyper Task Memory Level"]},
+  {q:"What does RAM stand for?", a:"Random Access Memory", w:["Read All Memory","Remote Access Module","Run All Machines"]},
+  {q:"Which is an input device?", a:"Keyboard", w:["Monitor","Speaker","Printer"]},
+  {q:"What symbol starts a comment in Python?", a:"#", w:["//","/*","--"]},
+  {q:"What is binary?", a:"Base 2 number system", w:["Base 10 system","Base 16 system","Base 8 system"]},
+  {q:"A step-by-step set of instructions is called?", a:"Algorithm", w:["Variable","Function","Loop"]},
+  {q:"What does 'def' do in Python?", a:"Defines a function", w:["Defines a variable","Starts a loop","Imports a module"]},
+  {q:"Which data type stores true or false?", a:"Boolean", w:["Integer","String","Float"]},
+  {q:"What does DNS stand for?", a:"Domain Name System", w:["Digital Node Service","Data Network Signal","Direct Name Server"]},
+  {q:"Which stores data permanently?", a:"Hard Drive", w:["RAM","Cache","Register"]},
+  {q:"What is phishing?", a:"Tricking users to give data", w:["A fishing game","Encrypting files","Blocking websites"]},
+  {q:"What does 'if' do in programming?", a:"Makes a decision", w:["Stores a value","Creates a loop","Defines a function"]},
+  {q:"Which protocol loads websites?", a:"HTTP", w:["FTP","SMTP","SSH"]},
+  {q:"What converts text to binary codes?", a:"ASCII", w:["URL","DNS","HTML"]},
+  {q:"Which loop runs a fixed number of times?", a:"for loop", w:["while loop","if statement","do loop"]},
+  {q:"What is a pixel?", a:"Smallest screen image unit", w:["A font type","A memory unit","A network packet"]},
+  {q:"What does an operating system do?", a:"Manages hardware and software", w:["Browses the web","Stores files only","Runs one program"]},
+  {q:"What is an IP address?", a:"A unique network identifier", w:["A web browser","A type of virus","A programming language"]},
+  {q:"What is encryption?", a:"Scrambling data to keep it safe", w:["Deleting old files","Speeding up a CPU","Printing documents"]},
+  {q:"What is a variable in programming?", a:"A named store for data", w:["A type of loop","A hardware component","A network cable"]},
+  {q:"What does 'print()' do in Python?", a:"Displays output to screen", w:["Saves a file","Loops through data","Deletes a variable"]},
+  {q:"Which component executes program instructions?", a:"CPU", w:["GPU","RAM","Hard Drive"]},
+  {q:"What is a bug in programming?", a:"An error in the code", w:["A fast program","A type of loop","A hardware part"]},
+  {q:"What does GUI stand for?", a:"Graphical User Interface", w:["General Upload Interface","Global User Input","Graphics Utility Index"]},
+  {q:"What is the internet?", a:"A global network of computers", w:["A type of software","A computer program","A storage device"]},
+  {q:"Which data structure uses LIFO?", a:"Stack", w:["Queue","Array","List"]},
+  {q:"What is an algorithm's time complexity?", a:"How long it takes to run", w:["How much RAM it uses","How many lines of code","How fast it compiles"]},
+  {q:"What does CSS stand for?", a:"Cascading Style Sheets", w:["Computer Style System","Creative Styling Script","Coded Style Software"]},
+];
+
+// ══════════════════════════════════════════
+// CANVAS
+// ══════════════════════════════════════════
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const overlay=document.getElementById('overlay');
+
+let W,H;
+// Pitch layout constants (recalculated on resize)
+let PITCH_TOP, PITCH_BOT, PITCH_LEFT, PITCH_RIGHT, PITCH_W, PITCH_H;
+let GOAL_TOP, GOAL_BOT, GOAL_LEFT, GOAL_RIGHT, GOAL_W;
+let STRIKER_LINE; // y position of the striking line
+
+function resize(){
+  W=window.innerWidth; H=window.innerHeight;
+  canvas.width=W; canvas.height=H;
+  // Pitch occupies most of screen
+  PITCH_LEFT=W*0.05; PITCH_RIGHT=W*0.95;
+  PITCH_TOP=H*0.04; PITCH_BOT=H*0.97;
+  PITCH_W=PITCH_RIGHT-PITCH_LEFT;
+  PITCH_H=PITCH_BOT-PITCH_TOP;
+  // Goal at top
+  GOAL_W=PITCH_W*0.4;
+  GOAL_LEFT=PITCH_LEFT+PITCH_W/2-GOAL_W/2;
+  GOAL_RIGHT=GOAL_LEFT+GOAL_W;
+  GOAL_TOP=PITCH_TOP;
+  GOAL_BOT=PITCH_TOP+PITCH_H*0.13;
+  // Striker waits near bottom
+  STRIKER_LINE=PITCH_BOT-PITCH_H*0.12;
+}
+resize();
+window.addEventListener('resize',()=>{ resize(); });
+
+// ══════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════
+let gameState='idle'; // idle|showing|ball_coming|striking|goal|save|gameover
+let score=0, streak=0, lives=3, questionsAnswered=0;
+let currentQ=null, currentAnswer=''; // answer on current ball
+let usedQs=[];
+let frameCount=0;
+let animId;
+
+// Ball
+let ball={x:0,y:0,vx:0,vy:0,spin:0,spinV:0,label:'',visible:false,radius:22};
+
+// Striker
+let striker={
+  x:0,         // centre x
+  y:0,         // centre y (feet)
+  targetX:0,
+  running:false,
+  kicking:false,
+  kickFrame:0,
+  direction:1, // 1=right, -1=left
+  legAngle:0,
+};
+
+// Goalkeeper
+let keeper={
+  x:0, y:0, diving:false, diveDir:0, diveFrame:0
+};
+
+// Feedbacks
+let feedbacks=[];
+// Net particles (goal celebration)
+let netParticles=[];
+// Crowd noise sim
+let crowdFrame=0;
+
+let questionDisplayTimer=0; // frames to show question before ball drops
+const Q_DISPLAY_FRAMES=120;
+
+let leftDown=false, rightDown=false;
+let shakeX=0,shakeY=0;
+
+// ══════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════
+function initGame(){
+  score=0; streak=0; lives=3; questionsAnswered=0;
+  feedbacks=[]; netParticles=[];
+  frameCount=0;
+  striker.x=W/2; striker.y=STRIKER_LINE;
+  striker.targetX=W/2; striker.running=false; striker.kicking=false;
+  keeper.x=W/2; keeper.y=GOAL_BOT+10; keeper.diving=false;
+  ball.visible=false;
+  usedQs=[];
+  nextQuestion();
+}
+
+function nextQuestion(){
+  if(usedQs.length>=QS.length) usedQs=[];
+  const remaining=QS.map((_,i)=>i).filter(i=>!usedQs.includes(i));
+  const idx=remaining[Math.floor(Math.random()*remaining.length)];
+  usedQs.push(idx);
+  currentQ=QS[idx];
+
+  // Pick one answer for this ball — cycle: sometimes correct, sometimes wrong
+  // Probability of correct = 0.5, so player gets roughly 50/50 right/wrong balls
+  const allAnswers=[currentQ.a,...currentQ.w.slice(0,2)];
+  currentAnswer=allAnswers[Math.floor(Math.random()*allAnswers.length)];
+
+  ball.visible=false;
+  ball.label=currentAnswer;
+  gameState='showing';
+  questionDisplayTimer=Q_DISPLAY_FRAMES;
+}
+
+function dropBall(){
+  ball.x=GOAL_LEFT+GOAL_W/2 + (Math.random()-0.5)*GOAL_W*0.4;
+  ball.y=GOAL_BOT+ball.radius;
+  ball.vx=(Math.random()-0.5)*1.5;
+  ball.vy=1.8;
+  ball.spin=0; ball.spinV=0.08*(Math.random()>0.5?1:-1);
+  ball.visible=true;
+  gameState='ball_coming';
+  sfxBallDrop();
+}
+
+// ══════════════════════════════════════════
+// INPUT
+// ══════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A') leftDown=true;
+  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') rightDown=true;
+  if((e.key===' '||e.key==='Enter') && gameState==='ball_coming') tryKick();
+});
+document.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A') leftDown=false;
+  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D') rightDown=false;
+});
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const tx=e.touches[0].clientX;
+  if(tx<W*0.35) leftDown=true;
+  else if(tx>W*0.65) rightDown=true;
+  else if(gameState==='ball_coming') tryKick();
+},{passive:false});
+canvas.addEventListener('touchend',e=>{ leftDown=false; rightDown=false; },{passive:false});
+
+document.getElementById('start-btn').addEventListener('click',()=>{
+  AC.resume();
+  overlay.style.display='none';
+  gameState='playing';
+  initGame();
+  if(animId) cancelAnimationFrame(animId);
+  sfxWhistle();
+  loop();
+});
+
+// ══════════════════════════════════════════
+// KICK LOGIC
+// ══════════════════════════════════════════
+function tryKick(){
+  if(gameState!=='ball_coming') return;
+  // Check if striker is close enough to ball
+  const dx=Math.abs(striker.x - ball.x);
+  const dy=Math.abs(striker.y - ball.y);
+  if(dx<70 && dy<80){
+    doKick();
+  }
+}
+
+function doKick(){
+  gameState='striking';
+  striker.kicking=true; striker.kickFrame=0;
+  sfxKick();
+  const isCorrect = (currentAnswer===currentQ.a);
+  const targetX=GOAL_LEFT+GOAL_W/2+(Math.random()-0.5)*GOAL_W*0.5;
+  const targetY=GOAL_TOP+10;
+  const dist=Math.sqrt((targetX-ball.x)**2+(targetY-ball.y)**2);
+  ball.vx=(targetX-ball.x)/dist*18;
+  ball.vy=(targetY-ball.y)/dist*18;
+  ball.spinV=0.25*(Math.random()>0.5?1:-1);
+
+  if(isCorrect){
+    const ballSide=ball.x>W/2?1:-1;
+    keeper.diving=true; keeper.diveDir=-ballSide; keeper.diveFrame=0;
+    setTimeout(()=>{
+      gameState='goal';
+      score+=10+streak*2; streak++;
+      sfxGoal();
+      setTimeout(sfxCrowd, 300);
+      spawnNetParticles();
+      feedbacks.push({x:W/2,y:H*0.45,text:'⚽ GOAL!',color:'#00ff88',life:120,big:true});
+      if(streak>0&&streak%3===0) feedbacks.push({x:W/2,y:H*0.38,text:'🔥 '+streak+' in a row!',color:'#FFD700',life:100,big:false});
+      // Award extra life every 3 goals, up to max 3
+      if(streak>0 && streak%3===0 && lives<3){
+        lives++;
+        sfxLifeGained();
+        feedbacks.push({x:W/2,y:H*0.32,text:'❤️ +1 LIFE!',color:'#ff88aa',life:120,big:false});
+      }
+      setTimeout(()=>{ keeper.diving=false; nextQuestion(); }, 1800);
+    },500);
+  } else {
+    const ballSide=ball.x>W/2?1:-1;
+    keeper.diving=true; keeper.diveDir=ballSide; keeper.diveFrame=0;
+    setTimeout(()=>{
+      gameState='save';
+      lives--; streak=0;
+      sfxSave();
+      shakeX=10; shakeY=8;
+      feedbacks.push({x:W/2,y:H*0.45,text:'🧤 SAVED!',color:'#ff4444',life:100,big:true});
+      feedbacks.push({x:W/2,y:H*0.53,text:'Wrong answer — lost a life',color:'#ffaaaa',life:90,big:false});
+      if(lives<=0){
+        setTimeout(()=>{ gameState='gameover'; showGameOver(); },1500);
+      } else {
+        setTimeout(()=>{ keeper.diving=false; nextQuestion(); },1800);
+      }
+    },400);
+  }
+}
+
+// ══════════════════════════════════════════
+// UPDATE
+// ══════════════════════════════════════════
+function update(){
+  frameCount++; crowdFrame++;
+  shakeX*=0.75; shakeY*=0.75;
+
+  // Question display countdown
+  if(gameState==='showing'){
+    questionDisplayTimer--;
+    if(questionDisplayTimer<=0) dropBall();
+    return;
+  }
+
+  // Striker movement
+  const strikerSpeed=4;
+  if(leftDown && gameState==='ball_coming'){
+    striker.x-=strikerSpeed;
+    striker.direction=-1; striker.running=true;
+  } else if(rightDown && gameState==='ball_coming'){
+    striker.x+=strikerSpeed;
+    striker.direction=1; striker.running=true;
+  } else {
+    striker.running=false;
+  }
+  striker.x=Math.max(PITCH_LEFT+20, Math.min(PITCH_RIGHT-20, striker.x));
+
+  // Leg animation
+  if(striker.running) striker.legAngle=Math.sin(frameCount*0.25)*0.5;
+  else striker.legAngle*=0.85;
+
+  // Kick animation
+  if(striker.kicking){
+    striker.kickFrame++;
+    if(striker.kickFrame>25) striker.kicking=false;
+  }
+
+  // Ball physics
+  if(ball.visible && (gameState==='ball_coming'||gameState==='striking'||gameState==='goal'||gameState==='save')){
+    ball.x+=ball.vx;
+    ball.y+=ball.vy;
+    ball.spin+=ball.spinV;
+    // Bounce off pitch sides
+    if(ball.x-ball.radius<PITCH_LEFT){ ball.x=PITCH_LEFT+ball.radius; ball.vx*=-0.7; sfxBounce(); }
+    if(ball.x+ball.radius>PITCH_RIGHT){ ball.x=PITCH_RIGHT-ball.radius; ball.vx*=-0.7; sfxBounce(); }
+    // Ball rolling down — slight gravity effect
+    if(gameState==='ball_coming') ball.vy+=0.02;
+    // If ball rolls past striker without kick — no life lost, just continue
+    if(ball.y>PITCH_BOT+50 && gameState==='ball_coming'){
+      sfxMiss();
+      feedbacks.push({x:W/2,y:H*0.5,text:'⚠️ Missed! No life lost',color:'#ff9900',life:90,big:false});
+      ball.visible=false;
+      gameState='save';
+      setTimeout(()=>nextQuestion(),1400);
+    }
+  }
+
+  // Keeper dive
+  if(keeper.diving){
+    keeper.diveFrame++;
+    keeper.x += keeper.diveDir * 5;
+    keeper.x=Math.max(GOAL_LEFT+10, Math.min(GOAL_RIGHT-10, keeper.x));
+  } else {
+    // Keeper wanders slowly
+    keeper.x+=(W/2-keeper.x)*0.02;
+  }
+
+  // Net particles
+  netParticles.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.life--; p.vx*=0.98; });
+  netParticles=netParticles.filter(p=>p.life>0);
+
+  // Feedbacks
+  feedbacks.forEach(f=>{ f.y-=0.8; f.life--; });
+  feedbacks=feedbacks.filter(f=>f.life>0);
+}
+
+function spawnNetParticles(){
+  const cols=['#FFD700','#00ff88','#ffffff','#ff4444','#44aaff'];
+  for(let i=0;i<40;i++){
+    netParticles.push({
+      x:GOAL_LEFT+Math.random()*GOAL_W,
+      y:GOAL_TOP+Math.random()*(GOAL_BOT-GOAL_TOP),
+      vx:(Math.random()-0.5)*5,
+      vy:(Math.random()-0.5)*5-2,
+      r:3+Math.random()*5,
+      color:cols[Math.floor(Math.random()*cols.length)],
+      life:60+Math.random()*40
+    });
+  }
+}
+
+// ══════════════════════════════════════════
+// DRAW
+// ══════════════════════════════════════════
+function draw(){
+  ctx.save();
+  if(Math.abs(shakeX)>0.3) ctx.translate(shakeX*(Math.random()*2-1), shakeY*(Math.random()*2-1));
+
+  // Background — stadium dark
+  ctx.fillStyle='#0a1a0a';
+  ctx.fillRect(0,0,W,H);
+
+  drawPitch();
+  drawGoal();
+  drawKeeper();       // inside goal, behind question panel
+  drawGoalQuestion(); // panel sits below crossbar, in front of keeper
+  if(ball.visible) drawBall();
+  drawStriker();
+  drawNetParticles();
+  drawFeedbacks();
+  drawUI();
+
+  ctx.restore();
+}
+
+function drawPitch(){
+  // Pitch green
+  const grass=ctx.createLinearGradient(0,PITCH_TOP,0,PITCH_BOT);
+  grass.addColorStop(0,'#1a6b1a');
+  grass.addColorStop(0.5,'#1d7a1d');
+  grass.addColorStop(1,'#155c15');
+  ctx.fillStyle=grass;
+  ctx.beginPath();
+  ctx.roundRect(PITCH_LEFT,PITCH_TOP,PITCH_W,PITCH_H,8);
+  ctx.fill();
+
+  // Pitch stripe pattern
+  ctx.globalAlpha=0.08;
+  for(let i=0;i<12;i++){
+    const sy=PITCH_TOP+i*(PITCH_H/12);
+    ctx.fillStyle=(i%2===0)?'#000':'#fff';
+    ctx.fillRect(PITCH_LEFT,sy,PITCH_W,PITCH_H/12);
+  }
+  ctx.globalAlpha=1;
+
+  // Outer border
+  ctx.strokeStyle='rgba(255,255,255,0.8)';
+  ctx.lineWidth=2.5;
+  ctx.strokeRect(PITCH_LEFT,PITCH_TOP,PITCH_W,PITCH_H);
+
+  // Centre circle area (half visible)
+  const cx=W/2, cy=PITCH_BOT;
+  ctx.strokeStyle='rgba(255,255,255,0.5)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(cx,cy,PITCH_H*0.2,Math.PI,0);
+  ctx.stroke();
+
+  // Centre line
+  ctx.beginPath();
+  ctx.moveTo(PITCH_LEFT,PITCH_BOT-PITCH_H*0.5);
+  ctx.lineTo(PITCH_RIGHT,PITCH_BOT-PITCH_H*0.5);
+  ctx.stroke();
+
+  // Penalty box
+  const pbW=PITCH_W*0.55, pbH=PITCH_H*0.22;
+  const pbX=PITCH_LEFT+(PITCH_W-pbW)/2;
+  ctx.strokeStyle='rgba(255,255,255,0.6)';
+  ctx.strokeRect(pbX,PITCH_TOP,pbW,pbH);
+
+  // Six yard box
+  const sbW=PITCH_W*0.28, sbH=PITCH_H*0.1;
+  const sbX=PITCH_LEFT+(PITCH_W-sbW)/2;
+  ctx.strokeRect(sbX,PITCH_TOP,sbW,sbH);
+
+  // Penalty spot
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.arc(W/2,PITCH_TOP+PITCH_H*0.27,4,0,Math.PI*2);
+  ctx.fill();
+
+  // Striker line marker
+  ctx.setLineDash([8,8]);
+  ctx.strokeStyle='rgba(255,255,100,0.25)';
+  ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(PITCH_LEFT,STRIKER_LINE);
+  ctx.lineTo(PITCH_RIGHT,STRIKER_LINE);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawGoal(){
+  const depth=18;
+  // Net background
+  ctx.fillStyle='rgba(255,255,255,0.07)';
+  ctx.fillRect(GOAL_LEFT,GOAL_TOP,GOAL_W,GOAL_BOT-GOAL_TOP);
+  // Net lines
+  ctx.strokeStyle='rgba(255,255,255,0.18)';
+  ctx.lineWidth=0.8;
+  for(let x=GOAL_LEFT;x<=GOAL_RIGHT;x+=18){
+    ctx.beginPath(); ctx.moveTo(x,GOAL_TOP); ctx.lineTo(x,GOAL_BOT); ctx.stroke();
+  }
+  for(let y=GOAL_TOP;y<=GOAL_BOT;y+=14){
+    ctx.beginPath(); ctx.moveTo(GOAL_LEFT,y); ctx.lineTo(GOAL_RIGHT,y); ctx.stroke();
+  }
+  // Posts
+  ctx.strokeStyle='#dddddd';
+  ctx.lineWidth=5;
+  ctx.lineCap='round';
+  // Left post
+  ctx.beginPath(); ctx.moveTo(GOAL_LEFT,GOAL_TOP); ctx.lineTo(GOAL_LEFT,GOAL_BOT); ctx.stroke();
+  // Right post
+  ctx.beginPath(); ctx.moveTo(GOAL_RIGHT,GOAL_TOP); ctx.lineTo(GOAL_RIGHT,GOAL_BOT); ctx.stroke();
+  // Crossbar
+  ctx.beginPath(); ctx.moveTo(GOAL_LEFT,GOAL_BOT); ctx.lineTo(GOAL_RIGHT,GOAL_BOT); ctx.stroke();
+  // Post shadows / depth
+  ctx.strokeStyle='rgba(255,255,255,0.3)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(GOAL_LEFT,GOAL_TOP);
+  ctx.lineTo(GOAL_LEFT-depth,GOAL_TOP+depth);
+  ctx.lineTo(GOAL_LEFT-depth,GOAL_BOT+depth);
+  ctx.lineTo(GOAL_LEFT,GOAL_BOT);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(GOAL_RIGHT,GOAL_TOP);
+  ctx.lineTo(GOAL_RIGHT+depth,GOAL_TOP+depth);
+  ctx.lineTo(GOAL_RIGHT+depth,GOAL_BOT+depth);
+  ctx.lineTo(GOAL_RIGHT,GOAL_BOT);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(GOAL_LEFT-depth,GOAL_BOT+depth);
+  ctx.lineTo(GOAL_RIGHT+depth,GOAL_BOT+depth);
+  ctx.stroke();
+}
+
+function drawGoalQuestion(){
+  if(!currentQ) return;
+  // Question sits below the crossbar, over the pitch, in front of keeper
+  const qTop = GOAL_BOT + 8;
+  const qMaxW = GOAL_W + 60;
+  const fs = Math.min(22, W*0.03);
+  ctx.font='bold '+fs+'px Nunito,sans-serif';
+  const lines=wrapLines(ctx, currentQ.q, qMaxW-24);
+  const lineH=fs+6;
+  const boxH=lines.length*lineH+20;
+  const boxX=GOAL_LEFT-30;
+
+  // Dark semi-transparent panel
+  ctx.fillStyle='rgba(0,20,0,0.82)';
+  ctx.beginPath();
+  ctx.roundRect(boxX, qTop, qMaxW, boxH, 8);
+  ctx.fill();
+  ctx.strokeStyle='rgba(0,255,100,0.4)';
+  ctx.lineWidth=1.5;
+  ctx.stroke();
+
+  ctx.fillStyle='#FFD700';
+  ctx.textAlign='center';
+  ctx.shadowBlur=6; ctx.shadowColor='rgba(255,200,0,0.5)';
+  lines.forEach((line,i)=>{
+    ctx.fillText(line, GOAL_LEFT+GOAL_W/2, qTop+16+fs+(i*lineH));
+  });
+  ctx.shadowBlur=0;
+
+  // Countdown bar
+  if(gameState==='showing'){
+    const pct=1-(questionDisplayTimer/Q_DISPLAY_FRAMES);
+    ctx.fillStyle='rgba(0,255,100,0.15)';
+    ctx.fillRect(boxX, qTop+boxH-5, qMaxW, 5);
+    ctx.fillStyle='#00ff88';
+    ctx.fillRect(boxX, qTop+boxH-5, qMaxW*pct, 5);
+  }
+}
+
+function drawBall(){
+  const {x,y,radius,spin,label}=ball;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(spin);
+
+  // Shadow
+  ctx.save();
+  ctx.globalAlpha=0.2;
+  ctx.fillStyle='#000';
+  ctx.beginPath();
+  ctx.ellipse(0,radius*0.8,radius*0.7,radius*0.25,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // Ball body
+  ctx.shadowBlur=12; ctx.shadowColor='rgba(255,255,255,0.3)';
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(0,0,radius,0,Math.PI*2); ctx.fill();
+
+  // Football patches
+  ctx.fillStyle='#111';
+  drawHexPatch(0,-radius*0.55,radius*0.28);
+  drawHexPatch(-radius*0.48,-radius*0.18,radius*0.22);
+  drawHexPatch(radius*0.48,-radius*0.18,radius*0.22);
+  drawHexPatch(-radius*0.28,radius*0.42,radius*0.22);
+  drawHexPatch(radius*0.28,radius*0.42,radius*0.22);
+
+  ctx.shadowBlur=0;
+  ctx.restore();
+
+  // Label on ball (don't rotate with ball)
+  ctx.save();
+  const fs=Math.min(13,radius*0.55);
+  ctx.font='bold '+fs+'px Nunito,sans-serif';
+  ctx.textAlign='center';
+  // Background pill
+  ctx.fillStyle='rgba(0,0,0,0.75)';
+  const tw=ctx.measureText(label).width;
+  ctx.beginPath();
+  ctx.roundRect(x-tw/2-8,y-radius-fs-8,tw+16,fs+10,5);
+  ctx.fill();
+  const isCorrect=label===currentQ.a;
+  ctx.fillStyle=isCorrect?'#00ff88':'#ffffff';
+  ctx.fillText(label,x,y-radius-5);
+  ctx.restore();
+}
+
+function drawHexPatch(x,y,r){
+  ctx.beginPath();
+  for(let i=0;i<6;i++){
+    const a=(i/6)*Math.PI*2-Math.PI/6;
+    if(i===0) ctx.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+    else ctx.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+  }
+  ctx.closePath(); ctx.fill();
+}
+
+function drawKeeper(){
+  const {x,diving,diveDir,diveFrame}=keeper;
+  ctx.save();
+  // Keeper stands inside the goal, near the back (top of goal area)
+  const goalMidY = GOAL_TOP + (GOAL_BOT-GOAL_TOP)*0.6;
+  let kx=x, ky=goalMidY;
+  let armRaise=0, bodyTilt=0;
+  if(diving){
+    const t=Math.min(diveFrame/20,1);
+    kx+=diveDir*t*GOAL_W*0.45;
+    ky-=t*18;
+    armRaise=1.2*t;
+    bodyTilt=diveDir*0.6*t;
+  }
+  ctx.translate(kx,ky);
+  ctx.rotate(bodyTilt);
+
+  // Shadow
+  ctx.globalAlpha=0.2;
+  ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,5,16,5,0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+
+  // Body — yellow kit
+  ctx.fillStyle='#FFD700';
+  ctx.beginPath(); ctx.ellipse(0,-18,10,14,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#cc9900'; ctx.lineWidth=1.5; ctx.stroke();
+
+  // Arms
+  ctx.strokeStyle='#FFD700'; ctx.lineWidth=5; ctx.lineCap='round';
+  // Left arm
+  ctx.beginPath();
+  ctx.moveTo(-8,-20);
+  ctx.lineTo(-22-armRaise*8, -22-armRaise*14);
+  ctx.stroke();
+  // Right arm
+  ctx.beginPath();
+  ctx.moveTo(8,-20);
+  ctx.lineTo(22+armRaise*8, -22-armRaise*14);
+  ctx.stroke();
+  // Gloves
+  ctx.fillStyle='#ff4400';
+  ctx.beginPath(); ctx.arc(-22-armRaise*8,-22-armRaise*14,6,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(22+armRaise*8,-22-armRaise*14,6,0,Math.PI*2); ctx.fill();
+
+  // Legs
+  ctx.strokeStyle='#333'; ctx.lineWidth=5;
+  ctx.beginPath(); ctx.moveTo(-4,-6); ctx.lineTo(-8,8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(4,-6); ctx.lineTo(8,8); ctx.stroke();
+  // Boots
+  ctx.fillStyle='#111';
+  ctx.beginPath(); ctx.ellipse(-9,10,7,4,0.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9,10,7,4,-0.2,0,Math.PI*2); ctx.fill();
+
+  // Head
+  ctx.fillStyle='#FFDAB9';
+  ctx.beginPath(); ctx.arc(0,-33,10,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#cc8866'; ctx.lineWidth=1; ctx.stroke();
+  // Cap
+  ctx.fillStyle='#cc9900';
+  ctx.beginPath(); ctx.arc(0,-33,11,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#aa7700';
+  ctx.fillRect(-11,-36,22,5);
+
+  ctx.restore();
+}
+
+function drawStriker(){
+  const {x,y,running,kicking,kickFrame,direction,legAngle}=striker;
+  ctx.save();
+  ctx.translate(x,y);
+  if(direction===-1) ctx.scale(-1,1);
+
+  // Shadow
+  ctx.globalAlpha=0.2;
+  ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,4,18,5,0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+
+  // Kick pose
+  let kickLeg=0;
+  if(kicking){
+    const t=kickFrame/25;
+    kickLeg = t<0.4 ? t*2.5 : (1-t)*1.67;
+    kickLeg*=1.4;
+  }
+
+  // Legs
+  ctx.strokeStyle='#cc0000'; ctx.lineWidth=6; ctx.lineCap='round';
+  // Standing leg
+  ctx.beginPath();
+  ctx.moveTo(0,-8);
+  ctx.lineTo(-6+Math.cos(legAngle)*4, 8);
+  ctx.lineTo(-8+Math.cos(legAngle)*4,20);
+  ctx.stroke();
+  // Kicking leg
+  ctx.beginPath();
+  ctx.moveTo(0,-8);
+  ctx.lineTo(6+Math.cos(-legAngle+kickLeg)*8, 0+Math.sin(-legAngle+kickLeg)*8);
+  ctx.lineTo(16+kickLeg*10, -4+kickLeg*4);
+  ctx.stroke();
+
+  // Boots
+  ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(-8+Math.cos(legAngle)*4,22,7,4,0.1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(17+kickLeg*10,-3+kickLeg*4,8,4,-0.2,0,Math.PI*2); ctx.fill();
+
+  // Body — red kit
+  ctx.fillStyle='#dd0000';
+  ctx.beginPath(); ctx.ellipse(0,-20,10,14,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#ff4444'; ctx.lineWidth=1.5; ctx.stroke();
+  // Kit number
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  ctx.font='bold 9px Nunito,sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText('10',0,-20);
+
+  // Arms
+  ctx.strokeStyle='#dd0000'; ctx.lineWidth=5;
+  ctx.beginPath();
+  ctx.moveTo(-8,-22);
+  ctx.lineTo(-18,-16+Math.sin(legAngle)*5);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(8,-22);
+  ctx.lineTo(16,-18-Math.sin(legAngle)*5);
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle='#FFDAB9';
+  ctx.beginPath(); ctx.arc(0,-35,10,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#cc8866'; ctx.lineWidth=1; ctx.stroke();
+  // Hair
+  ctx.fillStyle='#331100';
+  ctx.beginPath(); ctx.arc(0,-35,10.5,Math.PI*1.1,Math.PI*1.9,false); ctx.fill();
+
+  ctx.restore();
+
+  // Kick indicator — show range circle
+  if(gameState==='ball_coming'){
+    const dist=Math.sqrt((striker.x-ball.x)**2+(striker.y-ball.y)**2);
+    const inRange=dist<80;
+    ctx.save();
+    ctx.globalAlpha=inRange?0.6:0.15;
+    ctx.strokeStyle=inRange?'#00ff88':'#ffffff';
+    ctx.lineWidth=1.5;
+    ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.arc(x,y,70,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+function drawNetParticles(){
+  netParticles.forEach(p=>{
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,p.life/20);
+    ctx.fillStyle=p.color;
+    ctx.shadowBlur=6; ctx.shadowColor=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawFeedbacks(){
+  feedbacks.forEach(f=>{
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,f.life/25);
+    ctx.font=(f.big?'bold 3rem':'bold 1.3rem')+' Bebas Neue,cursive';
+    ctx.textAlign='center';
+    ctx.fillStyle=f.color;
+    ctx.shadowBlur=16; ctx.shadowColor=f.color;
+    ctx.fillText(f.text,f.x,f.y);
+    ctx.restore();
+  });
+}
+
+function drawUI(){
+  // Top HUD bar
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.65)';
+  ctx.fillRect(0,0,W,42);
+
+  // Lives (as footballs)
+  ctx.font='bold 15px Nunito,sans-serif';
+  ctx.fillStyle='#aaffcc';
+  ctx.textAlign='left';
+  ctx.fillText('Lives:',12,28);
+  for(let i=0;i<3;i++){
+    ctx.font='18px sans-serif';
+    ctx.fillText(i<lives?'⚽':'🔘', 60+i*26, 28);
+  }
+
+  // Score
+  ctx.font='bold 15px Nunito,sans-serif';
+  ctx.fillStyle='#aaffcc';
+  ctx.textAlign='center';
+  ctx.fillText('SCORE', W/2, 16);
+  ctx.font='bold 20px Bebas Neue,cursive';
+  ctx.fillStyle='#FFD700';
+  ctx.fillText(score, W/2, 34);
+
+  // Streak
+  ctx.font='bold 15px Nunito,sans-serif';
+  ctx.textAlign='right';
+  ctx.fillStyle='#aaffcc';
+  ctx.fillText('Streak: '+(streak>0?'⚽'.repeat(Math.min(streak,5)):'—'), W-12, 28);
+
+  // Controls hint at bottom
+  ctx.font='bold 13px Nunito,sans-serif';
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,255,255,0.35)';
+  ctx.fillText('← → Move   SPACE Shoot', W/2, H-8);
+
+  // Ball coming indicator
+  if(gameState==='ball_coming'){
+    ctx.fillStyle='rgba(0,255,100,0.9)';
+    ctx.font='bold 14px Nunito,sans-serif';
+    ctx.textAlign='center';
+    const dist=Math.sqrt((striker.x-ball.x)**2+(striker.y-ball.y)**2);
+    if(dist<80){
+      ctx.fillStyle='#00ff88';
+      ctx.fillText('⚡ SHOOT NOW! (SPACE)', W/2, H-22);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════
+function wrapLines(ctx,text,maxW){
+  const words=text.split(' ');
+  const lines=[]; let line='';
+  for(const w of words){
+    const test=line+(line?'  ':'')+w;
+    if(ctx.measureText(test).width>maxW && line){
+      lines.push(line); line=w;
+    } else line=test;
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+
+function showGameOver(){
+  overlay.style.display='flex';
+  overlay.innerHTML=`
+    <h1>FULL<br>TIME</h1>
+    <div style="font-family:'Bebas Neue',cursive;font-size:2.5rem;color:#00ff88;">Score: ${score}</div>
+    <p>Goals scored: ${Math.floor(score/10)} ⚽<br>Best streak: ${streak} 🔥</p>
+    <button id="start-btn" style="background:linear-gradient(135deg,#00cc55,#007733);color:#fff;border:none;padding:16px 52px;font-family:'Bebas Neue',cursive;font-size:1.8rem;letter-spacing:3px;border-radius:4px;cursor:pointer;">PLAY AGAIN</button>
+  `;
+  document.getElementById('start-btn').addEventListener('click',()=>{
+    AC.resume(); overlay.style.display='none';
+    initGame();
+    if(animId) cancelAnimationFrame(animId);
+    sfxWhistle(); loop();
+  });
+}
+
+// ══════════════════════════════════════════
+// LOOP
+// ══════════════════════════════════════════
+function loop(){
+  if(gameState==='gameover') return;
+  update(); draw();
+  animId=requestAnimationFrame(loop);
+}
+
+// Draw title screen immediately
+function drawTitle(){
+  resize();
+  ctx.fillStyle='#0a1a0a'; ctx.fillRect(0,0,W,H);
+  const grass=ctx.createLinearGradient(0,H*0.1,0,H);
+  grass.addColorStop(0,'#1a6b1a'); grass.addColorStop(1,'#155c15');
+  ctx.fillStyle=grass;
+  ctx.beginPath(); ctx.roundRect(W*0.05,H*0.04,W*0.9,H*0.93,8); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=2;
+  ctx.strokeRect(W*0.05,H*0.04,W*0.9,H*0.93);
+}
+drawTitle();
+</script>
+</body>
+</html>
